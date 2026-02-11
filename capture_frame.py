@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Motion-triggered: one connection to remote MJPEG stream, piped to local server so you can view it while Python pulls frames."""
+"""Motion-triggered: one connection to remote MJPEG stream, piped to local server so you can view it while Python pulls frames.
 
+This version sends motion-triggered frames to a local llama.cpp vision server
+running Qwen3-VL-2B-Instruct (see scripts/start_llama_server.sh).
+"""
+
+import base64
 import io
 import sys
-import subprocess
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
 
 import numpy as np
 import requests
@@ -16,15 +20,15 @@ from PIL import Image
 
 CAPTURES_DIR = Path(__file__).resolve().parent / "captures"
 HTTP_TIMEOUT = 15
-FRAME_INTERVAL = 0.4       # seconds between frame checks
-MOTION_THRESHOLD = 12.0    # mean pixel delta (tune: higher = less sensitive)
+FRAME_INTERVAL = 0.4          # seconds between frame checks
+MOTION_THRESHOLD = 12.0       # mean pixel delta (tune: higher = less sensitive)
 MIN_SECONDS_BETWEEN_VLM = 2.0  # rate limit VLM calls
-PIPE_PORT = 8765            # local stream: http://localhost:8765/stream.mjpg
+PIPE_PORT = 8765               # local stream: http://localhost:8765/stream.mjpg
 
-# Your working command (single image, describe in detail)
-VLM_MODEL = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
+# Llama.cpp vision server (Qwen3-VL-2B) settings
+LLAMA_SERVER_URL = "http://127.0.0.1:8080/completion"
 VLM_PROMPT = "Describe this image in detail."
-VLM_MAX_TOKENS = 2048
+VLM_MAX_TOKENS = 256
 VLM_TEMP = 0.0
 
 
@@ -106,33 +110,56 @@ def run_pipe_server_thread(port: int, latest_frame: list, lock: threading.Lock, 
 
 
 def run_vlm_command(image_path: str) -> str:
-    """Run the exact command you pasted: python -m mlx_vlm.generate --model ... --prompt ... --image ... --max-tokens 2048 --temp 0.0"""
-    path = str(Path(image_path).resolve())
-    out = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mlx_vlm",
-            "generate",
-            "--model",
-            VLM_MODEL,
-            "--prompt",
-            VLM_PROMPT,
-            "--image",
-            path,
-            "--max-tokens",
-            str(VLM_MAX_TOKENS),
-            "--temperature",
-            str(VLM_TEMP),
+    """Send image to local llama.cpp vision server (Qwen3-VL-2B) and return description.
+
+    This uses the native /completion endpoint with `image_data` as described in
+    examples/server/README.md in the llama.cpp repo.
+    """
+    path = Path(image_path).resolve()
+    img_bytes = path.read_bytes()
+    img_b64 = base64.b64encode(img_bytes).decode("ascii")
+
+    # Prompt format expected by llama.cpp multimodal completion:
+    #   USER:[img-1]Describe the image\nASSISTANT:
+    prompt = f"USER:[img-1]{VLM_PROMPT}\nASSISTANT:"
+    payload = {
+        "prompt": prompt,
+        "n_predict": VLM_MAX_TOKENS,
+        "temperature": VLM_TEMP,
+        "image_data": [
+            {
+                "id": 1,
+                "data": img_b64,
+            }
         ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    result = (out.stdout or "").strip()
-    if out.returncode != 0 and out.stderr:
-        result = result or out.stderr.strip()
-    return result
+    }
+
+    try:
+        r = requests.post(LLAMA_SERVER_URL, json=payload, timeout=120)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        return f"[llama.cpp error] {e}"
+
+    try:
+        data = r.json()
+    except ValueError:
+        return r.text.strip()
+
+    # /completion responses generally have a "content" field that can be either
+    # a string or a list of segments; handle both.
+    content = data.get("content", "")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                txt = part.get("text") or part.get("content") or ""
+                parts.append(str(txt))
+            else:
+                parts.append(str(part))
+        return "".join(parts).strip()
+    return str(data)
 
 
 def main():

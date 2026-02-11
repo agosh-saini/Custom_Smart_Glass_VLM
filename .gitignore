@@ -109,3 +109,6 @@ captures/
 venv
 .cursor
 models/
+
+
+*.gguf
