@@ -112,7 +112,8 @@ def run_vlm_command(image_path: str) -> str:
         [
             sys.executable,
             "-m",
-            "mlx_vlm.generate",
+            "mlx_vlm",
+            "generate",
             "--model",
             VLM_MODEL,
             "--prompt",
