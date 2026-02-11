@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Preceptra Puck</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 1rem;
+      background: #1a1a1a;
+      color: #e0e0e0;
+    }
+    h1 { margin-top: 0; color: #fff; }
+    .stream-wrap {
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 1rem;
+    }
+    .stream-wrap img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+    .stream-placeholder {
+      padding: 2rem;
+      text-align: center;
+      color: #666;
+    }
+    .section {
+      background: #252525;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .section h2 { margin: 0 0 0.5rem 0; font-size: 1rem; color: #aaa; }
+    .latest-text { white-space: pre-wrap; }
+    .captures-list { display: flex; flex-direction: column; gap: 0.75rem; }
+    .capture-item {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+      padding: 0.5rem;
+      background: #1e1e1e;
+      border-radius: 6px;
+    }
+    .capture-item img { width: 120px; height: auto; border-radius: 4px; flex-shrink: 0; }
+    .capture-item .desc { flex: 1; font-size: 0.9rem; color: #ccc; }
+    .hint { font-size: 0.85rem; color: #888; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Preceptra Puck</h1>
+  <p class="hint">Run <code>python capture_frame.py &lt;stream_url&gt;</code> to start the pipe and motion-triggered VLM. This page shows the stream and captures.</p>
+
+  <div class="stream-wrap">
+    <div id="streamPlaceholder" class="stream-placeholder">Loading stream URL…</div>
+    <img id="streamImg" alt="Live stream" style="display: none;" />
+  </div>
+
+  <div class="section">
+    <h2>Latest description (VLM)</h2>
+    <div id="latestText" class="latest-text">—</div>
+  </div>
+
+  <div class="section">
+    <h2>Recent captures</h2>
+    <div id="capturesList" class="captures-list">—</div>
+  </div>
+
+  <script>
+    const streamImg = document.getElementById('streamImg');
+    const streamPlaceholder = document.getElementById('streamPlaceholder');
+    const latestText = document.getElementById('latestText');
+    const capturesList = document.getElementById('capturesList');
+
+    async function loadStreamUrl() {
+      try {
+        const r = await fetch('/api/stream_url');
+        const d = await r.json();
+        streamImg.src = d.url;
+        streamImg.style.display = 'block';
+        streamPlaceholder.style.display = 'none';
+      } catch (e) {
+        streamPlaceholder.textContent = 'Could not load stream URL. Is the backend running?';
+      }
+    }
+    streamImg.onerror = function() {
+      streamPlaceholder.style.display = 'block';
+      streamPlaceholder.textContent = 'Stream not available. Run: python capture_frame.py "<stream_url>" (pipe must be running on port 8765).';
+    };
+
+    async function loadLatest() {
+      try {
+        const r = await fetch('/api/latest');
+        const d = await r.json();
+        latestText.textContent = d.text || '—';
+      } catch (_) {
+        latestText.textContent = '—';
+      }
+    }
+
+    async function loadCaptures() {
+      try {
+        const r = await fetch('/api/captures');
+        const d = await r.json();
+        if (!d.captures || d.captures.length === 0) {
+          capturesList.innerHTML = '<span class="hint">No captures yet. Run capture_frame.py and trigger motion.</span>';
+          return;
+        }
+        capturesList.innerHTML = d.captures.map(c => `
+          <div class="capture-item">
+            <img src="${c.image_url}" alt="frame ${c.id}" />
+            <div class="desc">${escapeHtml(c.description || '—')}</div>
+          </div>
+        `).join('');
+      } catch (_) {
+        capturesList.innerHTML = '<span class="hint">Could not load captures.</span>';
+      }
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    loadStreamUrl();
+    loadLatest();
+    loadCaptures();
+    setInterval(loadLatest, 3000);
+    setInterval(loadCaptures, 5000);
+  </script>
+</body>
+</html>
