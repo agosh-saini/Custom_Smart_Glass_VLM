@@ -108,3 +108,4 @@ captures/
 .cache/
 venv
 .cursor
+models/
