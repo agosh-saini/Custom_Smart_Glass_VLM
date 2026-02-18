@@ -13,6 +13,7 @@ import time
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
+from urllib.parse import urlparse
 
 import numpy as np
 import requests
@@ -164,6 +165,7 @@ def run_vlm_command(image_path: str) -> str:
 
 def main():
     url = (sys.argv[1] if len(sys.argv) > 1 else "").strip() or input("Stream URL: ").strip()
+    url = url.strip().split()[0]  # single line, no trailing args
     if not url:
         print("Usage: python capture_frame.py <stream_url>", file=sys.stderr)
         sys.exit(1)
@@ -172,6 +174,11 @@ def main():
         print('  python capture_frame.py "http://192.168.1.100:8080/stream.mjpg"', file=sys.stderr)
         print('  python capture_frame.py "http://preceptra-1.local:8080/stream.mjpg"', file=sys.stderr)
         sys.exit(1)
+    # If URL has no path (e.g. http://host:8080), use the MJPEG stream path
+    p = urlparse(url)
+    if not (p.path or "").strip("/"):
+        url = url.rstrip("/") + "/stream.mjpg"
+        print("Using stream URL: %s" % url, file=sys.stderr)
     CAPTURES_DIR.mkdir(exist_ok=True)
 
     latest_frame = [None]
